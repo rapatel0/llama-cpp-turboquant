@@ -6,6 +6,7 @@
 #include "llama-batch.h"
 #include "llama-io.h"
 #include "llama-memory.h"
+#include "llama-kv-cache.h"
 #include "llama-mmap.h"
 #include "llama-model.h"
 #include "llama-ext.h"
@@ -1688,6 +1689,18 @@ int llama_context::decode(const llama_batch & batch_inp) {
             n_outputs = n_outputs_new;
         }
 
+        // Deferred quantization: convert F16 K-cache to quantized after prefill.
+        // Only on CUDA — Metal FA doesn't support mixed planar3/iso3 K + F16 V yet.
+#ifdef GGML_USE_CUDA
+        if (ubatch.n_tokens == 1 && memory) {
+            auto * kv = dynamic_cast<llama_kv_cache *>(memory.get());
+            if (kv && kv->convert_deferred_keys()) {
+                sched_need_reserve = true;
+                sched_reserve();
+            }
+        }
+#endif
+
         ggml_status status;
         const auto * res = process_ubatch(ubatch, LLM_GRAPH_TYPE_DECODER, mctx.get(), status);
 
@@ -2963,8 +2976,20 @@ llama_context * llama_init_from_model(
 
     if (params.flash_attn_type != LLAMA_FLASH_ATTN_TYPE_DISABLED && ggml_is_quantized(params.type_k)) {
         const uint32_t blck_size = ggml_blck_size(params.type_k);
+        const bool k_is_turbo = (params.type_k == GGML_TYPE_TURBO2_0 ||
+                                 params.type_k == GGML_TYPE_TURBO3_0 ||
+                                 params.type_k == GGML_TYPE_TURBO4_0 ||
+                                 params.type_k == GGML_TYPE_PLANAR3_0 ||
+                                 params.type_k == GGML_TYPE_ISO3_0 ||
+                                 params.type_k == GGML_TYPE_PLANAR4_0 ||
+                                 params.type_k == GGML_TYPE_ISO4_0);
         for (uint32_t il = 0; il < model->hparams.n_layer; ++il) {
-            if (model->hparams.n_embd_head_k(il) % blck_size != 0) {
+            uint32_t head_k = model->hparams.n_embd_head_k(il);
+            // Turbo types zero-pad heads to next multiple of 128 in llama-kv-cache.cpp
+            if (k_is_turbo && head_k % 128 != 0) {
+                head_k = ((head_k + 127) / 128) * 128;
+            }
+            if (head_k % blck_size != 0) {
                 LLAMA_LOG_ERROR("%s: K cache type %s with block size %u does not divide n_embd_head_k=%u\n",
                     __func__, ggml_type_name(params.type_k), blck_size, model->hparams.n_embd_head_k(il));
                 return nullptr;
@@ -2974,13 +2999,38 @@ llama_context * llama_init_from_model(
 
     if (params.flash_attn_type != LLAMA_FLASH_ATTN_TYPE_DISABLED && ggml_is_quantized(params.type_v)) {
         const uint32_t blck_size = ggml_blck_size(params.type_v);
+        const bool v_is_turbo = (params.type_v == GGML_TYPE_TURBO2_0 ||
+                                 params.type_v == GGML_TYPE_TURBO3_0 ||
+                                 params.type_v == GGML_TYPE_TURBO4_0 ||
+                                 params.type_v == GGML_TYPE_PLANAR3_0 ||
+                                 params.type_v == GGML_TYPE_ISO3_0 ||
+                                 params.type_v == GGML_TYPE_PLANAR4_0 ||
+                                 params.type_v == GGML_TYPE_ISO4_0);
+        const bool is_mla = model->hparams.is_mla();
         for (uint32_t il = 0; il < model->hparams.n_layer; ++il) {
-            if (model->hparams.n_embd_head_v(il) % blck_size != 0) {
+            uint32_t head_v = model->hparams.n_embd_head_v(il);
+            // Turbo types zero-pad; MLA has no separate V cache (V = view of K)
+            if (v_is_turbo && !is_mla && head_v % 128 != 0) {
+                head_v = ((head_v + 127) / 128) * 128;
+            }
+            if (head_v % blck_size != 0) {
                 LLAMA_LOG_ERROR("%s: V cache type %s with block size %u does not divide n_embd_head_v=%u\n",
                     __func__, ggml_type_name(params.type_v), blck_size, model->hparams.n_embd_head_v(il));
                 return nullptr;
             }
         }
+    }
+
+    // TurboQuant cache types require flash attention — auto-enable if disabled
+    if (params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_DISABLED &&
+        (params.type_k == GGML_TYPE_TURBO3_0 || params.type_k == GGML_TYPE_TURBO4_0 ||
+         params.type_k == GGML_TYPE_PLANAR3_0 || params.type_k == GGML_TYPE_ISO3_0 ||
+         params.type_k == GGML_TYPE_PLANAR4_0 || params.type_k == GGML_TYPE_ISO4_0 ||
+         params.type_v == GGML_TYPE_TURBO3_0 || params.type_v == GGML_TYPE_TURBO4_0 ||
+         params.type_v == GGML_TYPE_PLANAR3_0 || params.type_v == GGML_TYPE_ISO3_0 ||
+         params.type_v == GGML_TYPE_PLANAR4_0 || params.type_v == GGML_TYPE_ISO4_0)) {
+        LLAMA_LOG_WARN("%s: turbo cache types require flash_attn — enabling automatically\n", __func__);
+        params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
     }
 
     if (ggml_is_quantized(params.type_v) && params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_DISABLED) {
