@@ -184,6 +184,68 @@ int main(int argc, char ** argv) {
             printf("\"vram_partial\":{\"size_bytes\":%zu,\"save_us_min\":%.1f,\"restore_us_min\":%.1f,\"save_plus_restore_ms\":%.4f},",
                    sz, save_us_min, restore_us_min, (save_us_min + restore_us_min) / 1000.0);
             fflush(stdout);
+
+            // Bit-exactness check: prove that save->mutate->restore reproduces
+            // the pre-mutation tensor bytes byte-for-byte. We use the upstream
+            // host-RAM PARTIAL_ONLY path as our ground-truth byte stream.
+            const int seq_id = 0;
+            const size_t pre_sz = llama_state_seq_get_size_ext(ctx, seq_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+            std::vector<uint8_t> pre_bytes(pre_sz);
+            llama_state_seq_get_data_ext(ctx, pre_bytes.data(), pre_sz, seq_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+
+            // 1) Snapshot tensors into VRAM shadow
+            vc.save();
+
+            // 2) Mutate the recurrent state by decoding 16 more tokens
+            //    (simulates a draft block in speculative verification).
+            const int n_mut = 16;
+            llama_batch mb = llama_batch_init(n_mut, 0, 1);
+            for (int j = 0; j < n_mut; ++j) {
+                common_batch_add(mb, prompt_toks[j % prompt_toks.size()], n_past + j, {0}, j == n_mut - 1);
+            }
+            if (llama_decode(ctx, mb)) {
+                fprintf(stderr, "correctness: decode-mutate failed\n");
+                llama_batch_free(mb);
+                return 1;
+            }
+            llama_batch_free(mb);
+
+            // 3) Verify the mutation actually changed the state
+            std::vector<uint8_t> post_bytes(pre_sz);
+            llama_state_seq_get_data_ext(ctx, post_bytes.data(), pre_sz, seq_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+            const bool mutated = (post_bytes != pre_bytes);
+
+            // 4) Restore from VRAM shadow
+            vc.restore();
+            // Roll back the cell metadata that decode advanced. The vram shadow
+            // restore only handles tensor data; head/used live in CPU bookkeeping.
+            llama_memory_seq_rm(llama_get_memory(ctx), seq_id, n_past, -1);
+
+            // 5) Compare restored state to pre-mutation reference
+            std::vector<uint8_t> after_bytes(pre_sz);
+            llama_state_seq_get_data_ext(ctx, after_bytes.data(), pre_sz, seq_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+
+            // Bit-exactness check on tensor data only (skip the metadata header
+            // which may differ in head/used after seq_rm). The format is:
+            //   [meta header] then tensor data in order.
+            // For a strict tensor-only compare, we'd need to know the header
+            // length. Instead, we check whether the after_bytes match pre_bytes
+            // exactly; if they do, both metadata and tensors are bit-equal.
+            const bool exact = (after_bytes == pre_bytes);
+
+            // Also do a tail-byte compare which excludes the small metadata
+            // header at the start (typically <100 bytes) and isolates the
+            // tensor data which is what vram_seq_checkpoint actually preserves.
+            const size_t tail_offset = pre_sz / 100;  // skip first 1% (covers metadata)
+            const bool tail_exact = (pre_sz > tail_offset) &&
+                std::equal(pre_bytes.begin() + tail_offset, pre_bytes.end(),
+                           after_bytes.begin() + tail_offset);
+
+            printf("\"vram_correctness\":{\"mutated_state_diverged\":%s,\"after_restore_full_match\":%s,\"after_restore_tail_match\":%s},",
+                   mutated ? "true" : "false",
+                   exact ? "true" : "false",
+                   tail_exact ? "true" : "false");
+            fflush(stdout);
         }
     }
 
