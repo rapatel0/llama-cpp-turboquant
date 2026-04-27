@@ -15,6 +15,8 @@
 #include "common.h"
 #include "llama.h"
 
+#include "../../src/llama-vram-checkpoint.h"
+
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -149,6 +151,42 @@ int main(int argc, char ** argv) {
     printf("{\"ckpt_tokens\":%d,\"prefill_ms\":%.1f,", ckpt_tokens, prefill_ms);
     bench_one(LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY, "partial");
     bench_one(0, "full");
+
+    // VRAM-resident shadow snapshot (D->D copies via cudaMemcpy).
+    {
+        vram_seq_checkpoint vc(ctx);
+        if (!vc.is_valid()) {
+            fprintf(stderr, "vram_seq_checkpoint: not a hybrid model or CUDA disabled — skipping\n");
+        } else {
+            const size_t sz = vc.size_bytes();
+            // Save: 5 trials, take min
+            double save_us_min = 1e18;
+            for (int trial = 0; trial < 5; ++trial) {
+                auto t = clk::now();
+                size_t n = vc.save();
+                double dt = us_since(t);
+                if (n != sz) {
+                    fprintf(stderr, "vram save: returned %zu, expected %zu\n", n, sz);
+                }
+                if (dt < save_us_min) save_us_min = dt;
+            }
+            // Restore: 5 trials, take min
+            double restore_us_min = 1e18;
+            for (int trial = 0; trial < 5; ++trial) {
+                auto t = clk::now();
+                size_t n = vc.restore();
+                double dt = us_since(t);
+                if (n != sz) {
+                    fprintf(stderr, "vram restore: returned %zu, expected %zu\n", n, sz);
+                }
+                if (dt < restore_us_min) restore_us_min = dt;
+            }
+            printf("\"vram_partial\":{\"size_bytes\":%zu,\"save_us_min\":%.1f,\"restore_us_min\":%.1f,\"save_plus_restore_ms\":%.4f},",
+                   sz, save_us_min, restore_us_min, (save_us_min + restore_us_min) / 1000.0);
+            fflush(stdout);
+        }
+    }
+
     printf("\"_end\":1}\n");
 
     return 0;

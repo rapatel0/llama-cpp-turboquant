@@ -28,6 +28,7 @@ add_library(llama
             llama-memory-hybrid.cpp
             llama-memory-hybrid-iswa.cpp
             llama-memory-recurrent.cpp
+            llama-vram-checkpoint.cpp
             llama-mmap.cpp
             llama-model-loader.cpp
             llama-model-saver.cpp
@@ -52,6 +53,17 @@ target_include_directories(llama PUBLIC ../include)
 target_compile_features   (llama PRIVATE cxx_std_17) # don't bump
 
 target_link_libraries(llama PUBLIC ggml)
+
+# CUDA toolkit headers/runtime for vram_seq_checkpoint (cudaMemcpy device-to-device).
+# Only the CUDA runtime headers are needed; the actual CUDA backend is linked via ggml.
+if (GGML_CUDA)
+    find_package(CUDAToolkit QUIET)
+    if (CUDAToolkit_FOUND)
+        target_compile_definitions(llama PRIVATE GGML_USE_CUDA)
+        target_include_directories(llama PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+        target_link_libraries     (llama PRIVATE CUDA::cudart)
+    endif()
+endif()
 
 if (BUILD_SHARED_LIBS)
     set_target_properties(llama PROPERTIES POSITION_INDEPENDENT_CODE ON)
