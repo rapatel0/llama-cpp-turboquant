@@ -579,8 +579,14 @@ enum llm_tensor_layer {
 
 struct LLM_KV {
     LLM_KV(llm_arch arch, const char * suffix = nullptr);
+    // Override the arch-name-string used in key substitution. Allows the loader
+    // to honor the file's actual general.architecture value when it differs
+    // from the canonical LLM_ARCH_NAMES mapping (e.g. community-built draft
+    // GGUFs that use "dflash-draft" while the fork registers "dflash").
+    LLM_KV(llm_arch arch, std::string arch_name_override, const char * suffix = nullptr);
 
     llm_arch arch;
+    std::string arch_name_override;  // empty == use LLM_ARCH_NAMES.at(arch)
     const char * suffix;
 
     std::string operator()(llm_kv kv) const;

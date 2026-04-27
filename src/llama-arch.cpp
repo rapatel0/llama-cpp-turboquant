@@ -793,10 +793,16 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
     {LLM_TENSOR_DFLASH_HIDDEN_NORM,         {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL}},
 };
 
-LLM_KV::LLM_KV(llm_arch arch, const char * suffix) : arch(arch), suffix(suffix) {}
+LLM_KV::LLM_KV(llm_arch arch, const char * suffix) : arch(arch), arch_name_override(), suffix(suffix) {}
+
+LLM_KV::LLM_KV(llm_arch arch, std::string arch_name_override, const char * suffix)
+    : arch(arch), arch_name_override(std::move(arch_name_override)), suffix(suffix) {}
 
 std::string LLM_KV::operator()(llm_kv kv) const {
-    std::string name = ::format(LLM_KV_NAMES.at(kv), LLM_ARCH_NAMES.at(arch));
+    const char * arch_str = !arch_name_override.empty()
+        ? arch_name_override.c_str()
+        : LLM_ARCH_NAMES.at(arch);
+    std::string name = ::format(LLM_KV_NAMES.at(kv), arch_str);
 
     if (suffix != nullptr) {
         name += ".";
@@ -845,6 +851,12 @@ llm_arch llm_arch_from_string(const std::string & name) {
         if (kv.second == name) {
             return kv.first;
         }
+    }
+
+    // Aliases for community-built draft GGUFs that use a different
+    // architecture string than the upstream PR's converter.
+    if (name == "dflash-draft") {
+        return LLM_ARCH_DFLASH;
     }
 
     return LLM_ARCH_UNKNOWN;
