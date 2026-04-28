@@ -634,6 +634,10 @@ json result_timings::to_json() const {
         base["draft_n"] = draft_n;
         base["draft_n_accepted"] = draft_n_accepted;
     }
+    if (draft_n_generated > 0) {
+        base["draft_n_generated"]  = draft_n_generated;
+        base["draft_n_acc_tokens"] = draft_n_acc_tokens;
+    }
 
     return base;
 }

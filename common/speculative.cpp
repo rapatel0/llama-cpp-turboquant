@@ -1506,6 +1506,28 @@ int common_speculative_force_reject_at(const common_speculative * spec, size_t n
     return spec->force_reject_at;
 }
 
+size_t common_speculative_n_gen_tokens(const common_speculative * spec) {
+    if (spec == nullptr) {
+        return 0;
+    }
+    size_t total = 0;
+    for (const auto & impl : spec->impls) {
+        total += impl->n_gen_tokens;
+    }
+    return total;
+}
+
+size_t common_speculative_n_acc_tokens(const common_speculative * spec) {
+    if (spec == nullptr) {
+        return 0;
+    }
+    size_t total = 0;
+    for (const auto & impl : spec->impls) {
+        total += impl->n_acc_tokens;
+    }
+    return total;
+}
+
 void common_speculative_print_stats(const common_speculative * spec) {
     if (spec == nullptr) {
         return;

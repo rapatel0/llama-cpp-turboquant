@@ -449,6 +449,18 @@ struct server_slot {
             timings.draft_n_accepted = n_draft_accepted;
         }
 
+        // Surface raw draft generation/acceptance counts straight from
+        // the common_speculative impls. These are the numbers used in
+        // the slot's "statistics ... #gen tokens / #acc tokens" log line
+        // and reflect actual per-impl generation, before the slot
+        // truncates drafts to fit the remaining-tokens budget.
+        const size_t spec_gen = common_speculative_n_gen_tokens(spec.get());
+        const size_t spec_acc = common_speculative_n_acc_tokens(spec.get());
+        if (spec_gen > 0) {
+            timings.draft_n_generated  = (int32_t) spec_gen;
+            timings.draft_n_acc_tokens = (int32_t) spec_acc;
+        }
+
         return timings;
     }
 

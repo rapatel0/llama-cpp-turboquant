@@ -273,8 +273,16 @@ struct result_timings {
     double predicted_per_second = 0.0;
 
     // Optional speculative metrics - only included when > 0
-    int32_t draft_n = 0;
-    int32_t draft_n_accepted = 0;
+    //
+    // draft_n / draft_n_accepted come from the slot's post-truncation
+    // counters and do NOT reflect raw draft generation — typically
+    // reads as ~100% even when many drafts were rejected at truncation
+    // time. Use draft_n_generated and draft_n_acc_tokens for the true
+    // raw-vs-accepted ratio across all impls.
+    int32_t draft_n            = 0;
+    int32_t draft_n_accepted   = 0;
+    int32_t draft_n_generated  = 0;  // raw draft tokens produced (pre-truncation)
+    int32_t draft_n_acc_tokens = 0;  // accepted tokens (cumulative across all impls)
 
     json to_json() const;
 };
