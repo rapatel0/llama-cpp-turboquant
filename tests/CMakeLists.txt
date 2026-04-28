@@ -251,6 +251,40 @@ llama_build_and_test(test-backend-sampler.cpp   LABEL "model")
 llama_build_and_test(test-state-restore-fragmented.cpp LABEL "model" ARGS -m "${MODEL_DEST}")
 set_tests_properties(test-state-restore-fragmented PROPERTIES FIXTURES_REQUIRED test-download-model)
 
+# Forced-rejection checkpoint restore checks (Sprint 005 F-H)
+llama_build(test-checkpoint-hybrid-state.cpp get-model.cpp)
+llama_test(
+    test-checkpoint-hybrid-state
+    NAME test-checkpoint-hybrid-state-f
+    LABEL model
+    ARGS -m "${MODEL_DEST}" --subtest F --cache-type-k planar3 --cache-type-v planar3
+)
+llama_test(
+    test-checkpoint-hybrid-state
+    NAME test-checkpoint-hybrid-state-g-planar3
+    LABEL model
+    ARGS -m "${MODEL_DEST}" --subtest G --cache-type-k planar3 --cache-type-v planar3
+)
+llama_test(
+    test-checkpoint-hybrid-state
+    NAME test-checkpoint-hybrid-state-g-iso3
+    LABEL model
+    ARGS -m "${MODEL_DEST}" --subtest G --cache-type-k iso3 --cache-type-v iso3
+)
+llama_test(
+    test-checkpoint-hybrid-state
+    NAME test-checkpoint-hybrid-state-h
+    LABEL model
+    ARGS -m "${MODEL_DEST}" --subtest H --cache-type-k planar3 --cache-type-v planar3
+)
+set_tests_properties(
+    test-checkpoint-hybrid-state-f
+    test-checkpoint-hybrid-state-g-planar3
+    test-checkpoint-hybrid-state-g-iso3
+    test-checkpoint-hybrid-state-h
+    PROPERTIES FIXTURES_REQUIRED test-download-model
+)
+
 if (NOT GGML_BACKEND_DL)
     # these tests use the backends directly and cannot be built with dynamic loading
     llama_build_and_test(test-barrier.cpp)

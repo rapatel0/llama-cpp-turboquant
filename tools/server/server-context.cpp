@@ -2994,7 +2994,14 @@ private:
                     }
 
                     GGML_ASSERT(slot.spec_i_batch.size() == n_draft + 1);
-                    auto accepted = common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx, slot.spec_i_batch, slot.spec_draft);
+                    const int force_reject_at = common_speculative_force_reject_at(slot.spec.get(), n_draft);
+                    auto accepted = common_sampler_sample_and_accept_n(
+                            slot.smpl.get(),
+                            slot.ctx,
+                            slot.spec_i_batch,
+                            slot.spec_draft,
+                            false,
+                            force_reject_at);
                     slot.spec_i_batch.clear();
 
                     SLT_DBG(slot, "%s: n_draft=%zu, accepted=%zu\n", __func__, slot.spec_draft.size(), accepted.size());

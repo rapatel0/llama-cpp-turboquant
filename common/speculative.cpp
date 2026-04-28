@@ -10,6 +10,7 @@
 #include "sampling.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <iomanip>
 #include <map>
@@ -1131,6 +1132,7 @@ struct common_speculative {
     std::vector<std::unique_ptr<common_speculative_state>> impls; // list of implementations to use and their states
 
     common_speculative_state * curr_impl = nullptr; // current implementation in use (for stats)
+    int force_reject_at = -1; // LLAMA_SPEC_FORCE_REJECT_AT debug hook
 };
 
 static common_ngram_map get_common_ngram_map(const common_speculative_config & config) {
@@ -1363,9 +1365,25 @@ common_speculative * common_speculative_init(
         return nullptr;
     }
 
+    int force_reject_at = -1;
+    if (const char * env_force_reject_at = std::getenv("LLAMA_SPEC_FORCE_REJECT_AT")) {
+        if (env_force_reject_at[0] != '\0') {
+            force_reject_at = std::atoi(env_force_reject_at);
+            if (force_reject_at < 0) {
+                LOG_WRN("%s: invalid LLAMA_SPEC_FORCE_REJECT_AT='%s' (must be >= 0), ignoring\n",
+                        __func__, env_force_reject_at);
+                force_reject_at = -1;
+            } else {
+                LOG_WRN("%s: LLAMA_SPEC_FORCE_REJECT_AT=%d enabled (debug-only)\n",
+                        __func__, force_reject_at);
+            }
+        }
+    }
+
     auto * result = new common_speculative {
         /* .impls     = */ std::move(impls),
         /* .curr_impl = */ nullptr,
+        /* .force_reject_at = */ force_reject_at,
     };
 
     return result;
@@ -1442,6 +1460,16 @@ void common_speculative_accept(common_speculative * spec, uint16_t n_accepted) {
         impl->accept(n_accepted);
         impl->n_call_accept++;
     }
+}
+
+int common_speculative_force_reject_at(const common_speculative * spec, size_t n_draft) {
+    if (spec == nullptr || spec->force_reject_at < 0) {
+        return -1;
+    }
+    if ((size_t) spec->force_reject_at >= n_draft) {
+        return -1;
+    }
+    return spec->force_reject_at;
 }
 
 void common_speculative_print_stats(const common_speculative * spec) {
