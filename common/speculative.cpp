@@ -614,6 +614,13 @@ struct common_speculative_state_eagle3 : public common_speculative_state {
 
     void begin(const llama_tokens & prompt) override {
         GGML_UNUSED(prompt);
+        // Reset per-request cumulative state. Without this, a new request
+        // with a smaller prompt than the previous request leaves
+        // eagle3_n_past pointing past the new prompt's end and draft()
+        // computes n_new <= 0, hitting the assert below. The slot's KV
+        // cache is rebuilt at the start of each request, so the stored
+        // n_past is no longer meaningful here either.
+        eagle3_n_past = 0;
     }
 
     void draft(
@@ -772,6 +779,16 @@ struct common_speculative_state_dflash : public common_speculative_state {
 
     void begin(const llama_tokens & prompt) override {
         GGML_UNUSED(prompt);
+        // Reset per-request cumulative state. accumulated_ctx is keyed
+        // to the previous request's target features and dflash_n_past
+        // tracks position within that previous prompt; carrying them
+        // into a new request makes draft() compute n_new <= 0 when the
+        // new prompt is shorter than the previous final state, which
+        // hits the assert below. server-context.cpp calls
+        // common_speculative_begin() once per slot transition into
+        // SLOT_STATE_GENERATING, exactly the right reset point.
+        dflash_n_past = 0;
+        accumulated_ctx.clear();
     }
 
     void draft(
