@@ -789,6 +789,23 @@ struct common_speculative_state_dflash : public common_speculative_state {
         // SLOT_STATE_GENERATING, exactly the right reset point.
         dflash_n_past = 0;
         accumulated_ctx.clear();
+
+        // Also clear the draft contexts' KV caches. draft() always feeds
+        // positions 0..block_size-1 to the decoder; if the previous
+        // request left KV data at those positions, the decoder's self-
+        // attention reads stale state and the draft predictions degrade
+        // to ~0% acceptance. Generation then crawls at <2 tok/s as the
+        // verify path rejects every draft. Symptom: requests that
+        // worked standalone hang past the client timeout when run
+        // after a different prompt (F-014). EAGLE3's draft() clears
+        // [n_past, inf) every step for the same reason; DFlash's draft
+        // doesn't, so we have to clear the full cache here in begin().
+        if (ctx_dft_enc) {
+            llama_memory_seq_rm(llama_get_memory(ctx_dft_enc), -1, 0, -1);
+        }
+        if (ctx_dft_dec) {
+            llama_memory_seq_rm(llama_get_memory(ctx_dft_dec), -1, 0, -1);
+        }
     }
 
     void draft(
